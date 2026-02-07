@@ -1,8 +1,6 @@
 // 🎬 Vegamovies - Movie Database
-// Automatic API Integration with TMDB
+// Static JSON data only
 // Date: February 2026
-
-const API_KEY = "";
 let movies = [];
 let currentMovies = [];
 let currentPage = 1;
@@ -36,82 +34,10 @@ function sortMoviesList(list) {
 
 const CACHE_KEY = "vega_cached_movies_v1";
 const CACHE_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
-const ENABLE_DEEP_LOAD = false; // static-only
-const DEEP_LOAD_UPDATE_UI = true; // background updates, first page stays pinned
 const TODAY_STR = new Date().toISOString().slice(0, 10);
 const PREFERRED_LANGS = ["hi", "ta", "te", "ml", "kn"]; // Hindi + South languages
 const INCLUDE_HINDI_HOLLYWOOD = true;
-const YEAR_START = 2000;
-const MAX_CONCURRENT_REQUESTS = 4;
 const STATIC_MOVIES_URL = "/movies.json";
-
-// ============================================
-// FETCH MOVIES FROM TMDB API
-// ============================================
-
-// ============================================
-// GET MOVIE GENRES
-// ============================================
-
-async function getGenresMap() {
-    try {
-        const url = `https://api.themoviedb.org/3/genre/movie/list?api_key=${API_KEY}&language=en-US`;
-        const response = await fetchWithRetry(url);
-        const data = await response.json();
-        
-        const genreMap = {};
-        if (data.genres) {
-            data.genres.forEach(genre => {
-                genreMap[genre.id] = genre.name;
-            });
-        }
-        return genreMap;
-    } catch (error) {
-        console.error('Error fetching genres:', error);
-        return {};
-    }
-}
-
-// ============================================
-// FETCH WITH RETRY (RATE LIMIT SAFE)
-// ============================================
-
-async function fetchWithRetry(url, options = {}, retries = 3, baseDelayMs = 500) {
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-            const response = await fetch(url, options);
-            if (response.ok) return response;
-            // Retry on rate limit / server errors
-            if (response.status === 429 || response.status >= 500) {
-                const delay = baseDelayMs * Math.pow(2, attempt);
-                await new Promise(r => setTimeout(r, delay));
-                continue;
-            }
-            return response;
-        } catch (error) {
-            const delay = baseDelayMs * Math.pow(2, attempt);
-            await new Promise(r => setTimeout(r, delay));
-        }
-    }
-    throw new Error(`Fetch failed after retries: ${url}`);
-}
-
-async function fetchAllWithLimit(urls, limit, handler) {
-    let index = 0;
-    const workers = Array.from({ length: limit }, async () => {
-        while (index < urls.length) {
-            const current = urls[index++];
-            try {
-                const response = await fetchWithRetry(current);
-                const data = await response.json();
-                await handler(data, current);
-            } catch (error) {
-                console.warn("Fetch failed:", current, error);
-            }
-        }
-    });
-    await Promise.all(workers);
-}
 
 // ============================================
 // CACHE HELPERS
@@ -253,70 +179,6 @@ function getRandomPlatform() {
 }
 
 // ============================================
-// FETCH MOVIES FROM TMDB API - Smart Year Range
-// ============================================
-
-async function fetchMoviesFromAPI({ updateUI = true } = {}) {
-    try {
-        console.log('🔄 Fetching movies from TMDB API...');
-        console.log('📽️ 2026-2015: Full load (3 pages per year)');
-        console.log('📽️ 2015-2000: Limited load (1 page per year)');
-        
-        // Get genres map first
-        const genreMap = await getGenresMap();
-        
-        const currentYear = new Date().getFullYear();
-
-        const urls = [];
-        // SECTION 1: currentYear down to 2015 - FULL LOAD (3 pages each)
-        console.log('\n=== SECTION 1: Current-2015 (Full Load) ===');
-        for (let year = currentYear; year >= 2015; year--) {
-            for (let page = 1; page <= 3; page++) {
-                urls.push(`https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&primary_release_year=${year}&sort_by=popularity.desc&release_date.lte=${TODAY_STR}&page=${page}`);
-            }
-        }
-
-        // SECTION 2: 2014 down to 2000 - LIMITED LOAD (1 page each)
-        console.log('\n=== SECTION 2: 2014-2000 (Limited Load) ===');
-        for (let year = 2014; year >= YEAR_START; year--) {
-            urls.push(`https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&primary_release_year=${year}&sort_by=popularity.desc&release_date.lte=${TODAY_STR}&page=1`);
-        }
-
-        await fetchAllWithLimit(urls, MAX_CONCURRENT_REQUESTS, (data, url) => {
-            if (data && data.results && data.results.length > 0) {
-                data.results.forEach((movie) => {
-                    if (!isReleased(movie.release_date || "")) return;
-                    movies.push(toMovieObj(movie, genreMap, (movie.release_date || "").slice(0, 4)));
-                });
-            }
-        });
-        
-        // Sort movies by date (newest first), then popularity (desc)
-        movies.sort((a, b) => {
-            const dateDiff = new Date(normalizeDateForSort(b.date)) - new Date(normalizeDateForSort(a.date));
-            if (dateDiff !== 0) return dateDiff;
-            return (b.popularity || 0) - (a.popularity || 0);
-        });
-        
-        console.log(`\n✅ Successfully loaded ${movies.length} movies from TMDB API (2026-2000)`);
-        
-        console.log(`✅ Successfully loaded ${movies.length} movies from TMDB API`);
-        if (updateUI) {
-            setMoviesAndRefresh(movies, { cache: true });
-        } else {
-            setCachedMovies(movies);
-        }
-        
-    } catch (error) {
-        console.error('❌ Error fetching movies from API:', error);
-        movies = [];
-        if (updateUI) {
-            setMoviesAndRefresh(movies, { cache: false });
-        }
-    }
-}
-
-// ============================================
 // OPTIONAL STATIC DATA (SEO-FRIENDLY)
 // ============================================
 
@@ -331,120 +193,6 @@ async function fetchStaticMovies() {
         return true;
     } catch (error) {
         return false;
-    }
-}
-
-// ============================================
-// FAST LOAD (CURRENT YEAR -> 2025)
-// ============================================
-
-async function fetchTopCurrentTo2025() {
-    try {
-        const genreMap = await getGenresMap();
-        const currentYear = new Date().getFullYear();
-        const years = [];
-        for (let y = currentYear; y >= 2025; y--) {
-            years.push(y);
-        }
-
-        const unique = new Map();
-        const pagesPerYear = 3;
-
-        for (const y of years) {
-            for (let page = 1; page <= pagesPerYear; page++) {
-                const url = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&primary_release_year=${y}&sort_by=popularity.desc&release_date.lte=${TODAY_STR}&page=${page}`;
-                let data = null;
-                try {
-                    const response = await fetch(url);
-                    data = await response.json();
-                } catch (error) {
-                    continue;
-                }
-
-                if (data && data.results) {
-                    data.results.forEach(m => {
-                        if (!unique.has(m.id)) unique.set(m.id, m);
-                    });
-                }
-
-            const list = Array.from(unique.values())
-                .filter(m => isReleased(m.release_date))
-                .sort((a, b) => {
-                    const dateDiff = new Date(normalizeDateForSort(b.release_date)) - new Date(normalizeDateForSort(a.release_date));
-                    if (dateDiff !== 0) return dateDiff;
-                    return (b.popularity || 0) - (a.popularity || 0);
-                })
-                .slice(0, FIRST_PAGE_SIZE)
-                .map(m => toMovieObj(m, genreMap, (m.release_date || "").slice(0, 4)));
-
-                if (list.length >= FIRST_PAGE_SIZE) {
-                    setMoviesAndRefresh(list, { cache: true, pinFirstPage: true });
-                    console.log(`⚡ Fast 2015+ movies loaded: ${list.length}`);
-                    return;
-                }
-            }
-        }
-
-        const list = Array.from(unique.values())
-            .filter(m => isReleased(m.release_date))
-            .sort((a, b) => {
-                const dateDiff = new Date(normalizeDateForSort(b.release_date)) - new Date(normalizeDateForSort(a.release_date));
-                if (dateDiff !== 0) return dateDiff;
-                return (b.popularity || 0) - (a.popularity || 0);
-            })
-            .slice(0, FIRST_PAGE_SIZE)
-            .map(m => toMovieObj(m, genreMap, (m.release_date || "").slice(0, 4)));
-
-        if (list.length) {
-            setMoviesAndRefresh(list, { cache: true, pinFirstPage: true });
-            console.log(`⚡ Fast current->2025 movies loaded: ${list.length}`);
-        }
-    } catch (error) {
-        console.error("Fast current->2025 load failed:", error);
-    }
-}
-
-// ============================================
-// FAST FIRST PAGE (HINDI + SOUTH DUBBED)
-// ============================================
-
-async function fetchFastFirstPage() {
-    try {
-        const genreMap = await getGenresMap();
-        const urls = [
-            `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&region=IN&with_original_language=hi&sort_by=popularity.desc&release_date.lte=${TODAY_STR}&page=1`,
-            `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&region=IN&with_original_language=ta&sort_by=popularity.desc&release_date.lte=${TODAY_STR}&page=1`,
-            `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&region=IN&with_original_language=te&sort_by=popularity.desc&release_date.lte=${TODAY_STR}&page=1`,
-            `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&region=IN&with_original_language=ml&sort_by=popularity.desc&release_date.lte=${TODAY_STR}&page=1`,
-            `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&region=IN&with_original_language=kn&sort_by=popularity.desc&release_date.lte=${TODAY_STR}&page=1`
-        ];
-
-        const responses = await Promise.all(urls.map(u => fetch(u).then(r => r.json()).catch(() => null)));
-        const merged = responses
-            .filter(r => r && r.results)
-            .flatMap(r => r.results);
-
-        const unique = new Map();
-        merged.forEach(m => {
-            if (!unique.has(m.id)) unique.set(m.id, m);
-        });
-
-        const fastList = Array.from(unique.values())
-            .filter(m => isReleased(m.release_date))
-            .sort((a, b) => {
-                const dateDiff = new Date(normalizeDateForSort(b.release_date)) - new Date(normalizeDateForSort(a.release_date));
-                if (dateDiff !== 0) return dateDiff;
-                return (b.popularity || 0) - (a.popularity || 0);
-            })
-            .slice(0, FIRST_PAGE_SIZE)
-            .map(m => toMovieObj(m, genreMap, (m.release_date || "").slice(0, 4)));
-
-        if (fastList.length) {
-            setMoviesAndRefresh(fastList, { cache: true, pinFirstPage: true });
-            console.log(`⚡ Fast first page loaded: ${fastList.length} movies`);
-        }
-    } catch (error) {
-        console.error("Fast first page failed:", error);
     }
 }
 
@@ -552,7 +300,7 @@ function createMovieCard(movie, index) {
     `;
     
     card.addEventListener('click', () => {
-        window.location.href = "https://youtu.be/QhNwq_z7eI4?si=HNR38afWQgHHx1BF";
+        window.location.href = "https://progenybanquet.com/ywza57j3h?key=b0aaf62533a7639fbbf9122783f80231";
     });
     
     return card;
@@ -930,27 +678,6 @@ function debounce(func, wait) {
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
     };
-}
-
-// ============================================
-// SERVICE WORKER REGISTRATION
-// ============================================
-
-if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js', {
-        scope: '/',
-        updateViaCache: 'none'
-    })
-        .then(reg => {
-            console.log('✅ Service Worker registered successfully');
-            caches.open('static-v1').then(cache => {
-                cache.addAll([
-                    '/robots.txt',
-                    '/sitemap.xml'
-                ]);
-            });
-        })
-        .catch(err => console.log('❌ Service Worker registration failed:', err));
 }
 
 // ============================================
